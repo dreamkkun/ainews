@@ -1,1 +1,421 @@
-"""\ndatabase.py — SQLite 저장소 (v2 — 종합 리포트 테이블 추가)\n=============================================================\n변경 내역 (v1 → v2):\n  - news 테이블: ai_summary / ai_sentiment / ai_insight / ai_tickers 컬럼 제거\n  - reports 테이블 신규 추가 (종합 리포트 저장)\n  - run_pipeline(): 기사별 분석 → 종합 리포트 1건 생성으로 변경\n"""\n\nimport os\nimport json\nimport logging\nimport sqlite3\nfrom contextlib import contextmanager\nfrom datetime import datetime, timezone, timedelta\nfrom typing import Optional\n\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nlogging.basicConfig(\n    level=logging.INFO,\n    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",\n    datefmt="%H:%M:%S",\n)\nlogger = logging.getLogger("database")\n\nDB_PATH = os.getenv("DB_PATH", "news.db")\nKST     = timezone(timedelta(hours=9))\n\nCREATE_TABLES_SQL = """\nCREATE TABLE IF NOT EXISTS news (\n    id           TEXT PRIMARY KEY,\n    title        TEXT NOT NULL,\n    source       TEXT,\n    url          TEXT,\n    description  TEXT,\n    published_at TEXT,\n    sector       TEXT,\n    collected_at TEXT\n);\n\nCREATE TABLE IF NOT EXISTS reports (\n    id              INTEGER PRIMARY KEY AUTOINCREMENT,\n    generated_at    TEXT NOT NULL,\n    news_count      INTEGER DEFAULT 0,\n    sentiment       TEXT DEFAULT 'neutral',\n    market_summary  TEXT,\n    sector_insights TEXT DEFAULT '[]',\n    top_insights    TEXT,\n    top_tickers     TEXT DEFAULT '[]',\n    risk_factors    TEXT\n);\n\nCREATE INDEX IF NOT EXISTS idx_news_published ON news (published_at DESC);\nCREATE INDEX IF NOT EXISTS idx_news_sector    ON news (sector);\nCREATE INDEX IF NOT EXISTS idx_reports_gen    ON reports (generated_at DESC);\n"""\n\n\n@contextmanager\ndef get_connection(db_path: str = DB_PATH):\n    conn = sqlite3.connect(db_path, check_same_thread=False)\n    conn.row_factory = sqlite3.Row\n    conn.execute("PRAGMA journal_mode=WAL")\n    try:\n        yield conn\n        conn.commit()\n    except Exception as e:\n        conn.rollback()\n        logger.error(f"DB 롤백 — {e}")\n        raise\n    finally:\n        conn.close()\n\n\nclass NewsDatabase:\n\n    def __init__(self, db_path: str = DB_PATH):\n        self.db_path = db_path\n        self._init_db()\n\n    def _init_db(self):\n        try:\n            with get_connection(self.db_path) as conn:\n                conn.executescript(CREATE_TABLES_SQL)\n            logger.info(f"DB 초기화 완료: {self.db_path}")\n        except Exception as e:\n            logger.error(f"DB 초기화 실패 — {e}")\n            raise\n\n    def upsert(self, news: dict) -> bool:\n        sql = """\n        INSERT OR IGNORE INTO news\n            (id, title, source, url, description, published_at, sector, collected_at)\n        VALUES\n            (:id, :title, :source, :url, :description, :published_at, :sector, :collected_at)\n        """\n        try:\n            with get_connection(self.db_path) as conn:\n                cursor = conn.execute(sql, news)\n            return cursor.rowcount > 0\n        except Exception as e:\n            logger.error(f"upsert 실패 (id={news.get('id')}) — {e}")\n            return False\n\n    def upsert_many(self, news_list: list[dict]) -> dict:\n        success, failed = 0, 0\n        for news in news_list:\n            try:\n                self.upsert(news)\n                success += 1\n            except Exception as e:\n                logger.warning(f"저장 실패 — {e}")\n                failed += 1\n        result = {"total": len(news_list), "success": success, "failed": failed}\n        logger.info(f"뉴스 일괄 저장 — {result}")\n        return result\n\n    def get_news(\n        self,\n        limit:          int           = 50,\n        sector:         Optional[str] = None,\n        date_from:      Optional[str] = None,\n        date_to:        Optional[str] = None,\n        search_keyword: Optional[str] = None,\n    ) -> list[dict]:\n        conditions, params = [], []\n\n        if sector:\n            conditions.append("sector = ?")\n            params.append(sector)\n        if date_from:\n            conditions.append("published_at >= ?")\n            params.append(date_from)\n        if date_to:\n            conditions.append("published_at <= ?")\n            params.append(date_to)\n        if search_keyword:\n            conditions.append("title LIKE ?")\n            params.append(f"%{search_keyword}%")\n\n        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""\n        sql   = f"SELECT * FROM news {where} ORDER BY published_at DESC LIMIT ?"\n        params.append(limit)\n\n        try:\n            with get_connection(self.db_path) as conn:\n                rows = conn.execute(sql, params).fetchall()\n            return [dict(row) for row in rows]\n        except Exception as e:\n            logger.error(f"뉴스 조회 실패 — {e}")\n            return []\n\n    def count_news(self) -> int:\n        try:\n            with get_connection(self.db_path) as conn:\n                return conn.execute("SELECT COUNT(*) FROM news").fetchone()[0]\n        except Exception:\n            return 0\n\n    def get_news_stats(self) -> dict:\n        sql = """\n        SELECT\n            COUNT(*)               AS total,\n            COUNT(DISTINCT sector) AS sectors,\n            MAX(collected_at)      AS last_update\n        FROM news\n        """\n        try:\n            with get_connection(self.db_path) as conn:\n                row = conn.execute(sql).fetchone()\n            return dict(row) if row else {}\n        except Exception as e:\n            logger.error(f"뉴스 통계 조회 실패 — {e}")\n            return {}\n\n    def get_sector_distribution(self) -> list[dict]:\n        sql = """\n        SELECT sector, COUNT(*) AS total\n        FROM   news\n        GROUP  BY sector\n        ORDER  BY total DESC\n        """\n        try:\n            with get_connection(self.db_path) as conn:\n                rows = conn.execute(sql).fetchall()\n            return [dict(row) for row in rows]\n        except Exception as e:\n            logger.error(f"섹터 분포 조회 실패 — {e}")\n            return []\n\n    def save_report(self, report: dict, news_count: int) -> int:\n        sql = """\n        INSERT INTO reports\n            (generated_at, news_count, sentiment, market_summary,\n             sector_insights, top_insights, top_tickers, risk_factors)\n        VALUES\n            (:generated_at, :news_count, :sentiment, :market_summary,\n             :sector_insights, :top_insights, :top_tickers, :risk_factors)\n        """\n        record = {\n            "generated_at":    report.get("generated_at", datetime.now(KST).isoformat()),\n            "news_count":      news_count,\n            "sentiment":       report.get("sentiment", "neutral"),\n            "market_summary":  report.get("market_summary", ""),\n            "sector_insights": json.dumps(report.get("sector_insights", []), ensure_ascii=False),\n            "top_insights":    report.get("top_insights", ""),\n            "top_tickers":     json.dumps(report.get("top_tickers", []), ensure_ascii=False),\n            "risk_factors":    report.get("risk_factors", ""),\n        }\n        try:\n            with get_connection(self.db_path) as conn:\n                cursor = conn.execute(sql, record)\n            report_id = cursor.lastrowid\n            logger.info(f"리포트 저장 완료 (id={report_id})")\n            return report_id\n        except Exception as e:\n            logger.error(f"리포트 저장 실패 — {e}")\n            return -1\n\n    def get_latest_report(self) -> Optional[dict]:\n        sql = "SELECT * FROM reports ORDER BY generated_at DESC LIMIT 1"\n        try:\n            with get_connection(self.db_path) as conn:\n                row = conn.execute(sql).fetchone()\n            return self._row_to_report(row) if row else None\n        except Exception as e:\n            logger.error(f"최신 리포트 조회 실패 — {e}")\n            return None\n\n    def get_report_history(self, limit: int = 10) -> list[dict]:\n        sql = """\n        SELECT id, generated_at, news_count, sentiment\n        FROM   reports\n        ORDER  BY generated_at DESC\n        LIMIT  ?\n        """\n        try:\n            with get_connection(self.db_path) as conn:\n                rows = conn.execute(sql, (limit,)).fetchall()\n            return [dict(row) for row in rows]\n        except Exception as e:\n            logger.error(f"리포트 이력 조회 실패 — {e}")\n            return []\n\n    def delete_old_news(self, days: int = 30) -> int:\n        cutoff = (datetime.now(KST) - timedelta(days=days)).isoformat()\n        try:\n            with get_connection(self.db_path) as conn:\n                cursor = conn.execute("DELETE FROM news WHERE published_at < ?", (cutoff,))\n            logger.info(f"{days}일 이전 뉴스 {cursor.rowcount}건 삭제")\n            return cursor.rowcount\n        except Exception as e:\n            logger.error(f"오래된 뉴스 삭제 실패 — {e}")\n            return 0\n\n    @staticmethod\n    def _row_to_report(row: sqlite3.Row) -> dict:\n        d = dict(row)\n        try:\n            d["sector_insights"] = json.loads(d.get("sector_insights", "[]"))\n        except Exception:\n            d["sector_insights"] = []\n        try:\n            d["top_tickers"] = json.loads(d.get("top_tickers", "[]"))\n        except Exception:\n            d["top_tickers"] = []\n        return d\n\n\ndef run_pipeline(\n    naver_items_per_query: int  = 10,\n    use_rss_fallback:      bool = True,\n) -> dict:\n    from news_collector import NewsCollector\n    from ai_analyzer    import AIAnalyzer\n\n    logger.info("=== 파이프라인 시작 ===")\n\n    collector = NewsCollector()\n    news_list = collector.collect_all(\n        naver_items_per_query=naver_items_per_query,\n        use_rss_fallback=use_rss_fallback,\n    )\n    logger.info(f"수집 완료: {len(news_list)}건")\n\n    db     = NewsDatabase()\n    result = db.upsert_many(news_list)\n\n    if not news_list:\n        return {"collected": 0, "saved": 0, "report_id": -1, "sentiment": "neutral"}\n\n    analyzer = AIAnalyzer()\n    report   = analyzer.generate_report(news_list)\n\n    report_id = db.save_report(report, news_count=len(news_list))\n\n    logger.info("=== 파이프라인 종료 ===")\n    return {\n        "collected":  len(news_list),\n        "saved":      result["success"],\n        "report_id":  report_id,\n        "sentiment":  report.get("sentiment", "neutral"),\n    }\n\n\nif __name__ == "__main__":\n    print("=" * 60)\n    print("DB 모듈 단독 테스트")\n    print("=" * 60)\n\n    db = NewsDatabase()\n\n    test_news = [\n        {\n            "id": "t001", "title": "삼성전자 HBM4 양산 성공",\n            "source": "매일경제", "url": "https://example.com/1",\n            "description": "테스트", "published_at": "2024-08-20T09:00:00+09:00",\n            "sector": "반도체", "collected_at": "2024-08-20T10:00:00+09:00",\n        },\n        {\n            "id": "t002", "title": "미 연준 금리인하 신호",\n            "source": "한국경제", "url": "https://example.com/2",\n            "description": "테스트", "published_at": "2024-08-20T08:00:00+09:00",\n            "sector": "거시경제", "collected_at": "2024-08-20T10:00:00+09:00",\n        },\n    ]\n    db.upsert_many(test_news)\n\n    test_report = {\n        "generated_at":    datetime.now(KST).isoformat(),\n        "sentiment":       "positive",\n        "market_summary":  "오늘 시장은 반도체 호재와 금리인하 기대가 겹치며 강세를 보였다.",\n        "sector_insights": [{"sector": "반도체", "summary": "HBM4 양산 성공으로 수출 확대 기대", "sentiment": "positive"}],\n        "top_insights":    "• 반도체 섹터 비중 확대 고려\\n• 금리 민감주 관심 필요",\n        "top_tickers":     ["005930", "000660"],\n        "risk_factors":    "• 미중 무역 갈등 재점화 가능성\\n• 환율 변동성",\n    }\n    report_id = db.save_report(test_report, news_count=2)\n    print(f"\\n[리포트 저장] id={report_id}")\n\n    latest = db.get_latest_report()\n    if latest:\n        print(f"[최신 리포트] 감성={latest['sentiment']} | 뉴스={latest['news_count']}건")\n        print(f"  요약: {latest['market_summary'][:50]}...")\n\n    stats = db.get_news_stats()\n    print(f"\\n[뉴스 통계] 전체={stats.get('total')}건 | 섹터={stats.get('sectors')}개")\n
+"""
+database.py — SQLite 저장소 (v2 — 종합 리포트 테이블 추가)
+=============================================================
+변경 내역 (v1 → v2):
+  - news 테이블: ai_summary / ai_sentiment / ai_insight / ai_tickers 컬럼 제거
+  - reports 테이블 신규 추가 (종합 리포트 저장)
+  - run_pipeline(): 기사별 분석 → 종합 리포트 1건 생성으로 변경
+
+[테이블 구조]
+
+  [news]
+    id, title, source, url, description,
+    published_at, sector, collected_at
+
+  [reports]
+    id            INTEGER PRIMARY KEY AUTOINCREMENT
+    generated_at  TEXT    — 리포트 생성 시각 ISO 8601
+    news_count    INTEGER — 분석한 뉴스 건수
+    sentiment     TEXT    — 전반적 시장 감성
+    market_summary TEXT   — 시장 전체 요약
+    sector_insights TEXT  — JSON 배열
+    top_insights   TEXT   — 불릿 마크다운
+    top_tickers    TEXT   — JSON 배열
+    risk_factors   TEXT   — 불릿 마크다운
+"""
+
+import os
+import json
+import logging
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("database")
+
+DB_PATH = os.getenv("DB_PATH", "news.db")
+KST     = timezone(timedelta(hours=9))
+
+# ── DDL ───────────────────────────────────────────────────────
+CREATE_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS news (
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    source       TEXT,
+    url          TEXT,
+    description  TEXT,
+    published_at TEXT,
+    sector       TEXT,
+    collected_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_at    TEXT NOT NULL,
+    news_count      INTEGER DEFAULT 0,
+    sentiment       TEXT DEFAULT 'neutral',
+    market_summary  TEXT,
+    sector_insights TEXT DEFAULT '[]',
+    top_insights    TEXT,
+    top_tickers     TEXT DEFAULT '[]',
+    risk_factors    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_published ON news (published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_news_sector    ON news (sector);
+CREATE INDEX IF NOT EXISTS idx_reports_gen    ON reports (generated_at DESC);
+"""
+
+
+# ══════════════════════════════════════════════════════════════
+# 1. DB 커넥션
+# ══════════════════════════════════════════════════════════════
+
+@contextmanager
+def get_connection(db_path: str = DB_PATH):
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        yield conn
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"DB 롤백 — {e}")
+        raise
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+# 2. NewsDatabase 클래스
+# ══════════════════════════════════════════════════════════════
+
+class NewsDatabase:
+
+    def __init__(self, db_path: str = DB_PATH):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        try:
+            with get_connection(self.db_path) as conn:
+                conn.executescript(CREATE_TABLES_SQL)
+            logger.info(f"DB 초기화 완료: {self.db_path}")
+        except Exception as e:
+            logger.error(f"DB 초기화 실패 — {e}")
+            raise
+
+    # ── 뉴스 저장 ────────────────────────────────────────────────
+    def upsert(self, news: dict) -> bool:
+        """뉴스 1건 저장. 동일 ID 있으면 무시 (중복 방지)"""
+        sql = """
+        INSERT OR IGNORE INTO news
+            (id, title, source, url, description, published_at, sector, collected_at)
+        VALUES
+            (:id, :title, :source, :url, :description, :published_at, :sector, :collected_at)
+        """
+        try:
+            with get_connection(self.db_path) as conn:
+                cursor = conn.execute(sql, news)
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"upsert 실패 (id={news.get('id')}) — {e}")
+            return False
+
+    def upsert_many(self, news_list: list[dict]) -> dict:
+        """뉴스 리스트 일괄 저장"""
+        success, failed = 0, 0
+        for news in news_list:
+            try:
+                self.upsert(news)
+                success += 1
+            except Exception as e:
+                logger.warning(f"저장 실패 — {e}")
+                failed += 1
+        result = {"total": len(news_list), "success": success, "failed": failed}
+        logger.info(f"뉴스 일괄 저장 — {result}")
+        return result
+
+    # ── 뉴스 조회 ────────────────────────────────────────────────
+    def get_news(
+        self,
+        limit:          int           = 50,
+        sector:         Optional[str] = None,
+        date_from:      Optional[str] = None,
+        date_to:        Optional[str] = None,
+        search_keyword: Optional[str] = None,
+    ) -> list[dict]:
+        """조건에 맞는 뉴스 최신순 조회"""
+        conditions, params = [], []
+
+        if sector:
+            conditions.append("sector = ?")
+            params.append(sector)
+        if date_from:
+            conditions.append("published_at >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("published_at <= ?")
+            params.append(date_to)
+        if search_keyword:
+            conditions.append("title LIKE ?")
+            params.append(f"%{search_keyword}%")
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql   = f"SELECT * FROM news {where} ORDER BY published_at DESC LIMIT ?"
+        params.append(limit)
+
+        try:
+            with get_connection(self.db_path) as conn:
+                rows = conn.execute(sql, params).fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"뉴스 조회 실패 — {e}")
+            return []
+
+    def count_news(self) -> int:
+        try:
+            with get_connection(self.db_path) as conn:
+                return conn.execute("SELECT COUNT(*) FROM news").fetchone()[0]
+        except Exception:
+            return 0
+
+    def get_news_stats(self) -> dict:
+        """KPI 카드용 뉴스 통계 (섹터 수, 최근 수집 시각 등)"""
+        sql = """
+        SELECT
+            COUNT(*)               AS total,
+            COUNT(DISTINCT sector) AS sectors,
+            MAX(collected_at)      AS last_update
+        FROM news
+        """
+        try:
+            with get_connection(self.db_path) as conn:
+                row = conn.execute(sql).fetchone()
+            return dict(row) if row else {}
+        except Exception as e:
+            logger.error(f"뉴스 통계 조회 실패 — {e}")
+            return {}
+
+    def get_sector_distribution(self) -> list[dict]:
+        """섹터별 뉴스 수 (차트용)"""
+        sql = """
+        SELECT sector, COUNT(*) AS total
+        FROM   news
+        GROUP  BY sector
+        ORDER  BY total DESC
+        """
+        try:
+            with get_connection(self.db_path) as conn:
+                rows = conn.execute(sql).fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"섹터 분포 조회 실패 — {e}")
+            return []
+
+    # ── 리포트 저장 ──────────────────────────────────────────────
+    def save_report(self, report: dict, news_count: int) -> int:
+        """
+        종합 리포트 1건 저장.
+
+        Returns:
+            저장된 리포트 ID (실패 시 -1)
+        """
+        sql = """
+        INSERT INTO reports
+            (generated_at, news_count, sentiment, market_summary,
+             sector_insights, top_insights, top_tickers, risk_factors)
+        VALUES
+            (:generated_at, :news_count, :sentiment, :market_summary,
+             :sector_insights, :top_insights, :top_tickers, :risk_factors)
+        """
+        record = {
+            "generated_at":    report.get("generated_at", datetime.now(KST).isoformat()),
+            "news_count":      news_count,
+            "sentiment":       report.get("sentiment", "neutral"),
+            "market_summary":  report.get("market_summary", ""),
+            "sector_insights": json.dumps(report.get("sector_insights", []), ensure_ascii=False),
+            "top_insights":    report.get("top_insights", ""),
+            "top_tickers":     json.dumps(report.get("top_tickers", []), ensure_ascii=False),
+            "risk_factors":    report.get("risk_factors", ""),
+        }
+        try:
+            with get_connection(self.db_path) as conn:
+                cursor = conn.execute(sql, record)
+            report_id = cursor.lastrowid
+            logger.info(f"리포트 저장 완료 (id={report_id})")
+            return report_id
+        except Exception as e:
+            logger.error(f"리포트 저장 실패 — {e}")
+            return -1
+
+    # ── 리포트 조회 ──────────────────────────────────────────────
+    def get_latest_report(self) -> Optional[dict]:
+        """가장 최근 종합 리포트 1건 반환"""
+        sql = "SELECT * FROM reports ORDER BY generated_at DESC LIMIT 1"
+        try:
+            with get_connection(self.db_path) as conn:
+                row = conn.execute(sql).fetchone()
+            return self._row_to_report(row) if row else None
+        except Exception as e:
+            logger.error(f"최신 리포트 조회 실패 — {e}")
+            return None
+
+    def get_report_history(self, limit: int = 10) -> list[dict]:
+        """리포트 생성 이력 (최신순)"""
+        sql = """
+        SELECT id, generated_at, news_count, sentiment
+        FROM   reports
+        ORDER  BY generated_at DESC
+        LIMIT  ?
+        """
+        try:
+            with get_connection(self.db_path) as conn:
+                rows = conn.execute(sql, (limit,)).fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"리포트 이력 조회 실패 — {e}")
+            return []
+
+    # ── 삭제 ────────────────────────────────────────────────────
+    def delete_old_news(self, days: int = 30) -> int:
+        cutoff = (datetime.now(KST) - timedelta(days=days)).isoformat()
+        try:
+            with get_connection(self.db_path) as conn:
+                cursor = conn.execute("DELETE FROM news WHERE published_at < ?", (cutoff,))
+            logger.info(f"{days}일 이전 뉴스 {cursor.rowcount}건 삭제")
+            return cursor.rowcount
+        except Exception as e:
+            logger.error(f"오래된 뉴스 삭제 실패 — {e}")
+            return 0
+
+    # ── 내부 유틸 ───────────────────────────────────────────────
+    @staticmethod
+    def _row_to_report(row: sqlite3.Row) -> dict:
+        d = dict(row)
+        try:
+            d["sector_insights"] = json.loads(d.get("sector_insights", "[]"))
+        except Exception:
+            d["sector_insights"] = []
+        try:
+            d["top_tickers"] = json.loads(d.get("top_tickers", "[]"))
+        except Exception:
+            d["top_tickers"] = []
+        return d
+
+
+# ══════════════════════════════════════════════════════════════
+# 3. 파이프라인 통합 함수 — app.py 진입점
+# ══════════════════════════════════════════════════════════════
+
+def run_pipeline(
+    naver_items_per_query: int  = 10,
+    use_rss_fallback:      bool = True,
+) -> dict:
+    """
+    뉴스 수집 → DB 저장 → 종합 리포트 생성 → 리포트 저장
+
+    Returns:
+        {collected, saved, report_id, sentiment}
+    """
+    # Streamlit 환경에서 .env 재로드 보장
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+
+    from news_collector import NewsCollector
+    from ai_analyzer    import AIAnalyzer
+
+    logger.info("=== 파이프라인 시작 ===")
+
+    # 1. 뉴스 수집
+    collector = NewsCollector()
+    news_list = collector.collect_all(
+        naver_items_per_query=naver_items_per_query,
+        use_rss_fallback=use_rss_fallback,
+    )
+    logger.info(f"수집 완료: {len(news_list)}건")
+
+    # 2. 뉴스 DB 저장
+    db     = NewsDatabase()
+    result = db.upsert_many(news_list)
+
+    if not news_list:
+        return {"collected": 0, "saved": 0, "report_id": -1, "sentiment": "neutral"}
+
+    # 3. 종합 리포트 생성 (API 1회 호출)
+    analyzer = AIAnalyzer()
+    report   = analyzer.generate_report(news_list)
+
+    # 4. 리포트 저장
+    report_id = db.save_report(report, news_count=len(news_list))
+
+    logger.info("=== 파이프라인 종료 ===")
+    return {
+        "collected":  len(news_list),
+        "saved":      result["success"],
+        "report_id":  report_id,
+        "sentiment":  report.get("sentiment", "neutral"),
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 4. 단독 실행 테스트
+# ══════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("DB 모듈 단독 테스트")
+    print("=" * 60)
+
+    db = NewsDatabase()
+
+    # 테스트 뉴스 저장
+    test_news = [
+        {
+            "id": "t001", "title": "삼성전자 HBM4 양산 성공",
+            "source": "매일경제", "url": "https://example.com/1",
+            "description": "테스트", "published_at": "2024-08-20T09:00:00+09:00",
+            "sector": "반도체", "collected_at": "2024-08-20T10:00:00+09:00",
+        },
+        {
+            "id": "t002", "title": "미 연준 금리인하 신호",
+            "source": "한국경제", "url": "https://example.com/2",
+            "description": "테스트", "published_at": "2024-08-20T08:00:00+09:00",
+            "sector": "거시경제", "collected_at": "2024-08-20T10:00:00+09:00",
+        },
+    ]
+    db.upsert_many(test_news)
+
+    # 테스트 리포트 저장
+    test_report = {
+        "generated_at":    datetime.now(KST).isoformat(),
+        "sentiment":       "positive",
+        "market_summary":  "오늘 시장은 반도체 호재와 금리인하 기대가 겹치며 강세를 보였다.",
+        "sector_insights": [{"sector": "반도체", "summary": "HBM4 양산 성공으로 수출 확대 기대", "sentiment": "positive"}],
+        "top_insights":    "• 반도체 섹터 비중 확대 고려\n• 금리 민감주 관심 필요",
+        "top_tickers":     ["005930", "000660"],
+        "risk_factors":    "• 미중 무역 갈등 재점화 가능성\n• 환율 변동성",
+    }
+    report_id = db.save_report(test_report, news_count=2)
+    print(f"\n[리포트 저장] id={report_id}")
+
+    # 최신 리포트 조회
+    latest = db.get_latest_report()
+    if latest:
+        print(f"[최신 리포트] 감성={latest['sentiment']} | 뉴스={latest['news_count']}건")
+        print(f"  요약: {latest['market_summary'][:50]}...")
+
+    # 뉴스 통계
+    stats = db.get_news_stats()
+    print(f"\n[뉴스 통계] 전체={stats.get('total')}건 | 섹터={stats.get('sectors')}개")
