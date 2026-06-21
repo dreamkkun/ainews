@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg-primary:   #0D1117;
+  --bg-secondary: #161B22;
+  --bg-tertiary:  #1C2333;
+  --border:       #21262D;
+  --border-light: #30363D;
+  --text-primary: #E6EDF3;
+  --text-muted:   #8B949E;
+  --blue:         #58A6FF;
+  --green:        #3FB950;
+  --red:          #F85149;
+  --purple:       #79C0FF;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Noto Sans KR', 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
