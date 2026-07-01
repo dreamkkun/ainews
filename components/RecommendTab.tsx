@@ -8,25 +8,48 @@ interface Recommendation {
 }
 interface MarketRecommendations { marketContext: string; recommendations: Recommendation[]; }
 
-const THEMES = ["전체", "반도체", "AI/데이터센터", "바이오/헬스케어", "맹크/성장주", "배당성장주", "에너지/전력", "소비재/로케쏼"];
+const MARKET_TYPES = [
+  { label: "전체", value: "ALL" },
+  { label: "한국주", value: "KOREA" },
+  { label: "미국주", value: "US" },
+];
+
+const THEMES = [
+  "전체", "반도체", "AI/데이터센터", "바이오/헬스케어",
+  "맥크/성장주", "배당성장주", "에너지/전력", "소비재/로케이션",
+];
 
 export default function RecommendTab() {
+  const [marketType, setMarketType] = useState("ALL");
   const [theme, setTheme]     = useState("전체");
   const [data, setData]       = useState<MarketRecommendations | null>(null);
+  const [sources, setSources] = useState<{ title: string; url: string }[]>([]);
+  const [isFallback, setIsFallback] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const getRecommend = async () => {
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setIsFallback(false);
     try {
       const res = await fetch("/api/gemini/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ theme: theme === "전체" ? null : theme }),
+        body: JSON.stringify({
+          marketType,
+          selectedTheme: theme === "전체" ? undefined : theme,
+        }),
       });
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-      setData(await res.json());
+      const json = await res.json();
+      // API 응답: { data: { marketContext, recommendations }, sources, isFallback }
+      const payload = json.data ?? json;
+      setData({
+        marketContext: payload.marketContext ?? "",
+        recommendations: Array.isArray(payload.recommendations) ? payload.recommendations : [],
+      });
+      setSources(json.sources ?? []);
+      setIsFallback(json.isFallback ?? false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "추천 생성 중 오류가 발생했습니다.");
     } finally {
@@ -48,7 +71,10 @@ export default function RecommendTab() {
     <div style={{ padding: "24px 32px", maxWidth: 1280, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, paddingBottom: 8, borderBottom: "1px solid #21262D", flexWrap: "wrap", gap: 12 }}>
         <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.08em" }}>⭐ 오늘의 추천</div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={marketType} onChange={e => setMarketType(e.target.value)} style={sel}>
+            {MARKET_TYPES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
           <select value={theme} onChange={e => setTheme(e.target.value)} style={sel}>
             {THEMES.map(t => <option key={t}>{t}</option>)}
           </select>
@@ -60,6 +86,12 @@ export default function RecommendTab() {
 
       {error && <div style={errBox}>{error}</div>}
 
+      {isFallback && (
+        <div style={{ background: "#1C2333", border: "1px solid #E3B341", borderRadius: 8, padding: "10px 16px", color: "#E3B341", fontSize: "0.82rem", marginBottom: 16 }}>
+          ⚠️ Gemini API 호출에 실패하여 내부 폴백 데이터를 표시 중입니다.
+        </div>
+      )}
+
       {loading && (
         <div style={{ textAlign: "center", padding: "80px 20px", color: "#8B949E" }}>
           <div style={{ fontSize: "2.5rem", marginBottom: 12 }}>⭐</div>
@@ -70,7 +102,7 @@ export default function RecommendTab() {
       {data && !loading && (
         <>
           <div style={{ background: "#161B22", border: "1px solid #30363D", borderLeft: "3px solid #E3B341", borderRadius: 8, padding: "16px 20px", marginBottom: 20 }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#E3B341", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📊 시장 컨텍스트</div>
+            <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#E3B341", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📊 시장 콘텍스트</div>
             <p style={{ color: "#C9D1D9", fontSize: "0.92rem", lineHeight: 1.8, margin: 0 }}>{data.marketContext}</p>
           </div>
 
@@ -103,7 +135,6 @@ export default function RecommendTab() {
                     </div>
                   </div>
 
-                  {/* 점수 바 */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 14 }}>
                     {[{ label: "퀀트", v: r.quantScore }, { label: "모멘텀", v: r.momentumScore }, { label: "성장성", v: r.growthScore }].map(s => (
                       <div key={s.label}>
@@ -129,6 +160,19 @@ export default function RecommendTab() {
               );
             })}
           </div>
+
+          {sources.length > 0 && (
+            <div style={{ background: "transparent", border: "1px solid #21262D", borderRadius: 10, padding: "16px 20px", marginTop: 16 }}>
+              <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📎 참고 출체</div>
+              {sources.map((s, i) => (
+                <a key={i} href={s.url} target="_blank" rel="noreferrer"
+                  style={{ display: "block", color: "#58A6FF", fontSize: "0.82rem", marginBottom: 5 }}>
+                  {i + 1}. {s.title}
+                </a>
+              ))}
+            </div>
+          )}
+
           <p style={{ color: "#8B949E", fontSize: "0.75rem", textAlign: "center", marginTop: 24 }}>※ 투자 권유가 아닙니다. 참고용으로만 활용하세요.</p>
         </>
       )}
