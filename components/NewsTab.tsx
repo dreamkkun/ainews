@@ -19,6 +19,18 @@ interface Stats { total: number; sectors: number; reportCount: number; lastUpdat
 
 const SECTORS = ["전체", "반도체", "거시경제", "IT/플랫폼", "바이오", "에너지/소재", "금융", "자동차", "일반경제"];
 
+// /api/news 가 배열 또는 { news: [] } 객체로 올 수 있으므로 안전하게 추출
+function toArray(data: unknown): NewsItem[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    for (const key of ["news", "items", "data", "results"]) {
+      if (Array.isArray(obj[key])) return obj[key] as NewsItem[];
+    }
+  }
+  return [];
+}
+
 export default function NewsTab() {
   const [news, setNews]       = useState<NewsItem[]>([]);
   const [report, setReport]   = useState<MarketReport | null>(null);
@@ -41,10 +53,21 @@ export default function NewsTab() {
         fetch("/api/report/latest"),
         fetch("/api/stats"),
       ]);
-      if (nRes.ok) setNews(await nRes.json());
+      if (nRes.ok) {
+        const raw = await nRes.json();
+        setNews(toArray(raw));
+      }
       if (rRes.ok) setReport(await rRes.json());
-      if (sRes.ok) setStats(await sRes.json());
-    } catch (e) {
+      if (sRes.ok) {
+        const s = await sRes.json();
+        setStats({
+          total:       s.total       ?? s.totalNews   ?? 0,
+          sectors:     s.sectors     ?? s.sectorCount ?? 0,
+          reportCount: s.reportCount ?? s.reports     ?? 0,
+          lastUpdate:  s.lastUpdate  ?? s.updatedAt   ?? "",
+        });
+      }
+    } catch {
       setError("데이터를 불러오지 못했습니다. API 서버를 확인해 주세요.");
     } finally {
       setLoading(false);
@@ -102,10 +125,10 @@ export default function NewsTab() {
       {/* KPI 카드 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
         {[
-          { label: "총 수집 뉴스",    value: stats.total,       sub: "전체 기간" },
-          { label: "커버 섹터",       value: stats.sectors,     sub: "개 분야" },
-          { label: "최신 시장 감성",  value: sentimentIcon(report?.sentiment), sub: "AI 종합 판단", sm: true },
-          { label: "리포트 횟수",    value: stats.reportCount, sub: "누적" },
+          { label: "총 수집 뉴스",   value: stats.total,       sub: "전체 기간" },
+          { label: "커버 섹터",      value: stats.sectors,     sub: "개 분야" },
+          { label: "최신 시장 감성", value: sentimentIcon(report?.sentiment), sub: "AI 종합 판단", sm: true },
+          { label: "리포트 횟수",   value: stats.reportCount, sub: "누적" },
         ].map(k => (
           <div key={k.label} style={kpiCard}>
             <div style={kpiLbl}>{k.label}</div>
@@ -149,7 +172,7 @@ export default function NewsTab() {
                 <div style={phGreen}>📊 시장 요약</div>
                 <p style={{ color: "#C9D1D9", fontSize: "0.92rem", lineHeight: 1.8, margin: 0 }}>{report.marketSummary}</p>
               </div>
-              {report.sectorInsights?.length > 0 && (
+              {(report.sectorInsights ?? []).length > 0 && (
                 <div style={{ marginTop: 16 }}>
                   <div style={{ ...phGreen, marginBottom: 10 }}>📌 섹터별 감성</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
@@ -173,7 +196,7 @@ export default function NewsTab() {
             <div style={insightPanel}>
               <div style={phGreen}>💡 투자자 핵심 액션 포인트</div>
               <pre style={{ color: "#C9D1D9", fontSize: "0.9rem", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.8 }}>{report.topInsights}</pre>
-              {report.topTickers?.length > 0 && (
+              {(report.topTickers ?? []).length > 0 && (
                 <div style={{ marginTop: 14 }}>
                   <div style={{ ...phGreen, marginBottom: 8 }}>📌 주목 종목</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -203,7 +226,7 @@ export default function NewsTab() {
       {news.length === 0 && !loading ? (
         <div style={empty}><div style={{ fontSize: "2.5rem" }}>📭</div><p style={{ marginTop: 12 }}>수집된 뉴스가 없습니다.</p></div>
       ) : news.map(n => (
-        <div key={n.id} style={{ background: "#161B22", border: "1px solid #21262D", borderRadius: 10, padding: "14px 20px", marginBottom: 8, transition: "border-color .15s" }}>
+        <div key={n.id} style={{ background: "#161B22", border: "1px solid #21262D", borderRadius: 10, padding: "14px 20px", marginBottom: 8 }}>
           <a href={n.url} target="_blank" rel="noreferrer"
             style={{ color: "#E6EDF3", fontWeight: 600, fontSize: "0.95rem", lineHeight: 1.5, display: "block", marginBottom: 6 }}>
             {n.title}
