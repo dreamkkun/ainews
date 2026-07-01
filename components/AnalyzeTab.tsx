@@ -29,7 +29,7 @@ export default function AnalyzeTab() {
       const res = await fetch("/api/gemini/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company: query.trim() }),
+        body: JSON.stringify({ companyName: query.trim() }),
       });
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       const data = await res.json();
@@ -62,8 +62,8 @@ export default function AnalyzeTab() {
         <div style={card}>
           <div style={{ textAlign: "center", padding: "60px 0", color: "#8B949E" }}>
             <div style={{ fontSize: "2.5rem", marginBottom: 12 }}>🔍</div>
-            <p>Gemini AI가 기업을 분석하고 있습니다…</p>
-            <p style={{ fontSize: "0.82rem", marginTop: 8 }}>웹 검색을 포함하다 수십 초 소요될 수 있습니다.</p>
+            <p>Gemini AI가 기업를 분석하고 있습니다…</p>
+            <p style={{ fontSize: "0.82rem", marginTop: 8 }}>웹 검색을 포함하여 수십 초 소요될 수 있습니다.</p>
           </div>
         </div>
       )}
@@ -83,7 +83,7 @@ export default function AnalyzeTab() {
               <div style={{ textAlign: "right" }}>
                 <div style={{ color: "#8B949E", fontSize: "0.75rem" }}>현재가</div>
                 <div style={{ color: "#E6EDF3", fontWeight: 700, fontSize: "1.3rem" }}>{result.currentPrice}</div>
-                <div style={{ color: "#8B949E", fontSize: "0.75rem", marginTop: 2 }}>시총 {result.marketCap}</div>
+                <div style={{ color: "#8B949E", fontSize: "0.75rem", marginTop: 2 }}>시완 {result.marketCap}</div>
               </div>
             </div>
             {result.bm && (
@@ -111,13 +111,13 @@ export default function AnalyzeTab() {
               <div style={{ ...card, borderLeft: "3px solid #3FB950" }}>
                 <div style={{ ...cardTitle, color: "#3FB950" }}>▲ 강세 요인 (Bullish)</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {result.recentIssues.bullish.map((b, i) => <li key={i} style={{ color: "#C9D1D9", fontSize: "0.88rem", marginBottom: 6, lineHeight: 1.7 }}>{b}</li>)}
+                  {(result.recentIssues.bullish ?? []).map((b, i) => <li key={i} style={{ color: "#C9D1D9", fontSize: "0.88rem", marginBottom: 6, lineHeight: 1.7 }}>{b}</li>)}
                 </ul>
               </div>
               <div style={{ ...card, borderLeft: "3px solid #F85149" }}>
                 <div style={{ ...cardTitle, color: "#F85149" }}>▼ 약세 요인 (Bearish)</div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {result.recentIssues.bearish.map((b, i) => <li key={i} style={{ color: "#C9D1D9", fontSize: "0.88rem", marginBottom: 6, lineHeight: 1.7 }}>{b}</li>)}
+                  {(result.recentIssues.bearish ?? []).map((b, i) => <li key={i} style={{ color: "#C9D1D9", fontSize: "0.88rem", marginBottom: 6, lineHeight: 1.7 }}>{b}</li>)}
                 </ul>
               </div>
             </div>
@@ -133,7 +133,7 @@ export default function AnalyzeTab() {
                 </tr></thead>
                 <tbody>
                   {[result.valuationComparison.targetCompany,
-                    ...result.valuationComparison.competitors,
+                    ...(result.valuationComparison.competitors ?? []),
                     { name: "산업 평균", ...result.valuationComparison.industryAverage }
                   ].map((r, i) => (
                     <tr key={i} style={{ borderBottom: "1px solid #21262D", background: i === 0 ? "#1C2333" : "transparent" }}>
@@ -152,10 +152,10 @@ export default function AnalyzeTab() {
             </div>
           )}
 
-          {/* 출처 */}
+          {/* 출체 */}
           {sources.length > 0 && (
             <div style={{ ...card, background: "transparent", border: "1px solid #21262D" }}>
-              <div style={{ ...cardTitle, color: "#8B949E" }}>📎 참고 출처 (Grounding)</div>
+              <div style={{ ...cardTitle, color: "#8B949E" }}>📎 참고 출체 (Grounding)</div>
               {sources.map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noreferrer"
                   style={{ display: "block", color: "#58A6FF", fontSize: "0.82rem", marginBottom: 6 }}>
