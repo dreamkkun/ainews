@@ -26,10 +26,9 @@ const POPULAR = [
 
 const STEPS = [
   "🔍 기업 기본 정보 수집 중…",
-  "🌐 웹 검색으로 최신 뉴스 분석 중…",
   "📊 시장 포지션 & 산업 동향 파악 중…",
   "💰 밸류에이션 & 경쟁사 비교 중…",
-  "✍️ AI 리포트 생성 중…",
+  "✍️ Claude AI 리포트 생성 중…",
 ];
 
 const RECENT_KEY = "analyze_recent";
@@ -58,7 +57,6 @@ export default function AnalyzeTab() {
 
   useEffect(() => { setRecent(loadRecent()); }, []);
 
-  // 외부 클릭 시 드롤다운 닫기
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (!inputRef.current?.contains(e.target as Node) &&
@@ -84,12 +82,11 @@ export default function AnalyzeTab() {
     saveRecent(q);
     setRecent(loadRecent());
 
-    // 프로그레스 애니메이션
     let s = 0;
     const interval = setInterval(() => {
       s = Math.min(s + 1, STEPS.length - 1);
       setStep(s);
-      setProgress(prev => Math.min(prev + 18, 90));
+      setProgress(prev => Math.min(prev + 22, 90));
     }, 6000);
 
     try {
@@ -118,7 +115,6 @@ export default function AnalyzeTab() {
     <div style={{ padding: "24px 32px", maxWidth: 1280, margin: "0 auto" }}>
       <div style={secTitle}>🔍 기업 분석</div>
 
-      {/* 인풀박스 + 드론다운 */}
       <div style={{ position: "relative", marginBottom: 24 }}>
         <div style={{ display: "flex", gap: 10 }}>
           <input
@@ -135,7 +131,6 @@ export default function AnalyzeTab() {
           </button>
         </div>
 
-        {/* 스마트 드론다운 */}
         {showDrop && (
           <div ref={dropRef} style={{
             position: "absolute", top: "calc(100% + 6px)", left: 0,
@@ -170,10 +165,8 @@ export default function AnalyzeTab() {
 
       {error && <div style={errBox}>{error}</div>}
 
-      {/* 프로그레스 / 스켈레톤 UI */}
       {loading && (
         <div style={card}>
-          {/* 프로그레스 바 */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: "0.82rem", color: "#8B949E" }}>
               <span>{STEPS[step]}</span>
@@ -188,26 +181,20 @@ export default function AnalyzeTab() {
               }} />
             </div>
           </div>
-
-          {/* 스켈레톤 */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-            <div>
-              <Skeleton w={180} h={24} mb={10} />
-              <Skeleton w={120} h={16} />
-            </div>
+            <div><Skeleton w={180} h={24} mb={10} /><Skeleton w={120} h={16} /></div>
             <Skeleton w={80} h={36} />
           </div>
           <Skeleton w="100%" h={14} mb={8} />
           <Skeleton w="92%" h={14} mb={8} />
           <Skeleton w="78%" h={14} mb={24} />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-            <div><Skeleton w="100%" h={80} /></div>
-            <div><Skeleton w="100%" h={80} /></div>
+            <Skeleton w="100%" h={80} /><Skeleton w="100%" h={80} />
           </div>
           <Skeleton w="100%" h={14} mb={8} />
           <Skeleton w="85%" h={14} />
           <div style={{ textAlign: "center", marginTop: 20, color: "#8B949E", fontSize: "0.8rem" }}>
-            🔍 Gemini AI가 웹에서 실시간 정보를 검색하고 있습니다. 수십 초 소요될 수 있습니다.
+            🤖 Claude AI가 기업 정보를 분석하고 있습니다. 수십 초 소요될 수 있습니다.
           </div>
         </div>
       )}
@@ -294,7 +281,7 @@ export default function AnalyzeTab() {
 
           {sources.length > 0 && (
             <div style={{ ...card, background: "transparent", border: "1px solid #21262D" }}>
-              <div style={{ ...cardTitle, color: "#8B949E" }}>📎 참고 출체 (Grounding)</div>
+              <div style={{ ...cardTitle, color: "#8B949E" }}>📎 참고 출체</div>
               {sources.map((s, i) => (
                 <a key={i} href={s.url} target="_blank" rel="noreferrer"
                   style={{ display: "block", color: "#58A6FF", fontSize: "0.82rem", marginBottom: 6 }}>
@@ -310,7 +297,7 @@ export default function AnalyzeTab() {
         <div style={{ textAlign: "center", padding: "80px 20px", color: "#8B949E" }}>
           <div style={{ fontSize: "3rem", marginBottom: 12 }}>🔍</div>
           <p>분석할 기업명 또는 티커를 입력하세요.</p>
-          <p style={{ fontSize: "0.82rem", marginTop: 6 }}>Gemini AI가 웹 검색을 통해 실시간 정보를 분석합니다.</p>
+          <p style={{ fontSize: "0.82rem", marginTop: 6 }}>Claude AI가 기업 정보를 분석합니다.</p>
         </div>
       )}
     </div>
@@ -318,17 +305,8 @@ export default function AnalyzeTab() {
 }
 
 function Skeleton({ w, h, mb }: { w: number | string; h: number; mb?: number }) {
-  return (
-    <div style={{
-      width: w, height: h, borderRadius: 6,
-      background: "linear-gradient(90deg, #21262D 25%, #2D333B 50%, #21262D 75%)",
-      backgroundSize: "200% 100%",
-      animation: "shimmer 1.5s infinite",
-      marginBottom: mb ?? 0,
-    }} />
-  );
+  return <div style={{ width: w, height: h, borderRadius: 6, background: "#21262D", marginBottom: mb ?? 0 }} />;
 }
-
 function Tag({ text, color }: { text: string; color: string }) {
   return <span style={{ background: "#21262D", color, fontSize: "0.75rem", padding: "3px 9px", borderRadius: 4 }}>{text}</span>;
 }

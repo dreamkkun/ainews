@@ -27,20 +27,13 @@ const THEMES = [
   { label: "소비재 / 로케이션", value: "소비재/로케이션" },
 ];
 
-// 고스트 카드 3장
 function GhostCard({ rank }: { rank: number }) {
   return (
-    <div style={{
-      background: "#161B22", border: "1px solid #21262D",
-      borderRadius: 12, padding: "20px 24px", opacity: 0.45,
-    }}>
+    <div style={{ background: "#161B22", border: "1px solid #21262D", borderRadius: 12, padding: "20px 24px", opacity: 0.45 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <div style={{ background: "#1C2333", borderRadius: 8, width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", color: "#E3B341", fontWeight: 700, fontSize: "1.1rem", flexShrink: 0 }}>{rank}</div>
-          <div>
-            <Skel w={120} h={18} mb={8} />
-            <div style={{ display: "flex", gap: 6 }}><Skel w={56} h={14} /><Skel w={72} h={14} /></div>
-          </div>
+          <div><Skel w={120} h={18} mb={8} /><div style={{ display: "flex", gap: 6 }}><Skel w={56} h={14} /><Skel w={72} h={14} /></div></div>
         </div>
         <div style={{ display: "flex", gap: 20 }}>
           {["퀀트", "모멘텀", "성장성"].map(l => (
@@ -59,7 +52,6 @@ function GhostCard({ rank }: { rank: number }) {
     </div>
   );
 }
-
 function Skel({ w, h, mb }: { w: number | string; h: number; mb?: number }) {
   return <div style={{ width: w, height: h, borderRadius: 4, background: "#21262D", marginBottom: mb ?? 0 }} />;
 }
@@ -69,13 +61,12 @@ export default function RecommendTab() {
   const [theme, setTheme]     = useState("전체");
   const [data, setData]       = useState<MarketRecommendations | null>(null);
   const [sources, setSources] = useState<{ title: string; url: string }[]>([]);
-  const [isFallback, setIsFallback] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const getRecommend = async () => {
-    setLoading(true); setError(""); setIsFallback(false);
+    setLoading(true); setError("");
     try {
       const res = await fetch("/api/gemini/recommend", {
         method: "POST",
@@ -93,7 +84,6 @@ export default function RecommendTab() {
         recommendations: Array.isArray(payload.recommendations) ? payload.recommendations : [],
       });
       setSources(json.sources ?? []);
-      setIsFallback(json.isFallback ?? false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "추천 생성 중 오류가 발생했습니다.");
     } finally {
@@ -113,68 +103,39 @@ export default function RecommendTab() {
 
   return (
     <div style={{ padding: "24px 32px", maxWidth: 1280, margin: "0 auto" }}>
-
-      {/* 헤더 */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, paddingBottom: 8, borderBottom: "1px solid #21262D", flexWrap: "wrap", gap: 12 }}>
         <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.08em" }}>⭐ 오늘의 추천</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {/* 시장 드론다운 */}
-          <div style={{ position: "relative" }}>
-            <select
-              value={marketType}
-              onChange={e => setMarketType(e.target.value)}
-              style={sel}
-            >
-              {MARKET_TYPES.map(m => (
-                <option key={m.value} value={m.value} disabled={m.disabled}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-          {/* 테마 드론다운 */}
-          <div style={{ position: "relative" }}>
-            <select
-              value={theme}
-              onChange={e => setTheme(e.target.value)}
-              style={sel}
-            >
-              {THEMES.map(t => (
-                <option key={t.value} value={t.value} disabled={t.disabled}>{t.label}</option>
-              ))}
-            </select>
-          </div>
+          <select value={marketType} onChange={e => setMarketType(e.target.value)} style={sel}>
+            {MARKET_TYPES.map(m => <option key={m.value} value={m.value} disabled={m.disabled}>{m.label}</option>)}
+          </select>
+          <select value={theme} onChange={e => setTheme(e.target.value)} style={sel}>
+            {THEMES.map(t => <option key={t.value} value={t.value} disabled={t.disabled}>{t.label}</option>)}
+          </select>
           <button onClick={getRecommend} disabled={loading} style={btnStar}>
-            {loading ? "분석 중…" : "✨ 추천 종목 받기"}
+            {loading ? "Claude AI 분석 중…" : "✨ 추천 종목 받기"}
           </button>
         </div>
       </div>
 
       {error && <div style={errBox}>{error}</div>}
 
-      {isFallback && (
-        <div style={{ background: "#1C2333", border: "1px solid #E3B341", borderRadius: 8, padding: "10px 16px", color: "#E3B341", fontSize: "0.82rem", marginBottom: 16 }}>
-          ⚠️ Gemini API 호출에 실패하여 내부 폴백 데이터를 표시 중입니다.
-        </div>
-      )}
-
-      {/* 로딩 */}
       {loading && (
         <div style={{ textAlign: "center", padding: "40px 20px 20px", color: "#8B949E" }}>
           <div style={{ fontSize: "2rem", marginBottom: 10 }}>⭐</div>
-          <p style={{ marginBottom: 24 }}>Gemini AI가 오늘의 추천 종목을 선별하고 있습니다…</p>
+          <p style={{ marginBottom: 24 }}>Claude AI가 오늘의 추천 종목을 선별하고 있습니다…</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {[1,2,3].map(i => <GhostCard key={i} rank={i} />)}
           </div>
         </div>
       )}
 
-      {/* 결과 */}
       {data && !loading && (
         <>
           <div style={{ background: "#161B22", border: "1px solid #30363D", borderLeft: "3px solid #E3B341", borderRadius: 8, padding: "16px 20px", marginBottom: 20 }}>
             <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#E3B341", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📊 시장 콘텍스트</div>
             <p style={{ color: "#C9D1D9", fontSize: "0.92rem", lineHeight: 1.8, margin: 0 }}>{data.marketContext}</p>
           </div>
-
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {data.recommendations.map((r, i) => {
               const key = r.ticker ?? String(i);
@@ -215,46 +176,34 @@ export default function RecommendTab() {
                     {expanded === key ? "▲ 요약" : "▼ 상세 분석"}
                   </button>
                   {expanded === key && (
-                    <div style={{ marginTop: 12, background: "#0D1117", borderRadius: 8, padding: "14px 16px", color: "#C9D1D9", fontSize: "0.88rem", lineHeight: 1.8 }}>
-                      {r.detailedAnalysis}
-                    </div>
+                    <div style={{ marginTop: 12, background: "#0D1117", borderRadius: 8, padding: "14px 16px", color: "#C9D1D9", fontSize: "0.88rem", lineHeight: 1.8 }}>{r.detailedAnalysis}</div>
                   )}
                 </div>
               );
             })}
           </div>
-
           {sources.length > 0 && (
             <div style={{ background: "transparent", border: "1px solid #21262D", borderRadius: 10, padding: "16px 20px", marginTop: 16 }}>
               <div style={{ fontSize: "0.72rem", fontWeight: 600, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>📎 참고 출체</div>
-              {sources.map((s, i) => (
-                <a key={i} href={s.url} target="_blank" rel="noreferrer"
-                  style={{ display: "block", color: "#58A6FF", fontSize: "0.82rem", marginBottom: 5 }}>
-                  {i + 1}. {s.title}
-                </a>
-              ))}
+              {sources.map((s, i) => <a key={i} href={s.url} target="_blank" rel="noreferrer" style={{ display: "block", color: "#58A6FF", fontSize: "0.82rem", marginBottom: 5 }}>{i + 1}. {s.title}</a>)}
             </div>
           )}
-          <p style={{ color: "#8B949E", fontSize: "0.75rem", textAlign: "center", marginTop: 24 }}>※ 투자 권유가 아닙니다. 참고용으로만 활용하세요.</p>
+          <p style={{ color: "#8B949E", fontSize: "0.75rem", textAlign: "center", marginTop: 24 }}>※ 투자 권유가 아닙니다. Claude AI 분석 기반 참고용입니다.</p>
         </>
       )}
 
-      {/* 빈 상태 — 고스트 카드 프리뷰 */}
       {!data && !loading && !error && (
         <div>
           <div style={{ textAlign: "center", padding: "32px 20px 24px", color: "#8B949E" }}>
             <div style={{ fontSize: "2.5rem", marginBottom: 10 }}>⭐</div>
-            <p style={{ marginBottom: 4, color: "#C9D1D9" }}>시장과 테마를 선택하고 AI 추천 종목을 받아보세요.</p>
-            <p style={{ fontSize: "0.82rem", marginBottom: 28 }}>아래는 생성될 카드의 캐리문 형태입니다.</p>
+            <p style={{ marginBottom: 4, color: "#C9D1D9" }}>Claude AI가 시장과 테마를 분석해 추천 종목을 선별합니다.</p>
+            <p style={{ fontSize: "0.82rem", marginBottom: 28 }}>아래는 생성될 카드의 예시 형태입니다.</p>
           </div>
-          {/* 고스트 카드 3장 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12, pointerEvents: "none" }}>
-            {[1, 2, 3].map(i => <GhostCard key={i} rank={i} />)}
+            {[1,2,3].map(i => <GhostCard key={i} rank={i} />)}
           </div>
           <div style={{ textAlign: "center", marginTop: 24 }}>
-            <button onClick={getRecommend} style={{ ...btnStar, padding: "12px 28px", fontSize: "0.95rem" }}>
-              ✨ 지금 추천 받기
-            </button>
+            <button onClick={getRecommend} style={{ ...btnStar, padding: "12px 28px", fontSize: "0.95rem" }}>✨ 지금 추천 받기</button>
           </div>
         </div>
       )}
