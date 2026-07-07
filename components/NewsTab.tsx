@@ -19,7 +19,6 @@ interface Stats { total: number; sectors: number; reportCount: number; lastUpdat
 
 const SECTORS = ["전체", "반도체", "거시경제", "IT/플랫폼", "바이오", "에너지/소재", "금융", "자동차", "일반경제"];
 
-// /api/news 가 배열 또는 { news: [] } 객체로 올 수 있으므로 안전하게 추출
 function toArray(data: unknown): NewsItem[] {
   if (Array.isArray(data)) return data;
   if (data && typeof data === "object") {
@@ -53,10 +52,7 @@ export default function NewsTab() {
         fetch("/api/report/latest"),
         fetch("/api/stats"),
       ]);
-      if (nRes.ok) {
-        const raw = await nRes.json();
-        setNews(toArray(raw));
-      }
+      if (nRes.ok) setNews(toArray(await nRes.json()));
       if (rRes.ok) setReport(await rRes.json());
       if (sRes.ok) {
         const s = await sRes.json();
@@ -90,23 +86,27 @@ export default function NewsTab() {
   };
 
   const timeAgo = (iso: string) => {
+    if (!iso) return null;
     try {
       const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
       if (mins < 1) return "방금";
       if (mins < 60) return `${mins}분 전`;
       if (mins < 1440) return `${Math.floor(mins / 60)}시간 전`;
       return `${Math.floor(mins / 1440)}일 전`;
-    } catch { return iso?.slice(0, 10) ?? ""; }
+    } catch { return iso?.slice(0, 16).replace("T", " ") ?? null; }
   };
 
   const sentimentIcon = (s?: string) =>
     ({ positive: "📈 강세", negative: "📉 약세", neutral: "➡️ 중립" }[s ?? ""] ?? "—");
 
+  const lastCollected = stats.lastUpdate || report?.generatedAt || null;
+  const isEmpty = stats.total === 0 && !report;
+
   return (
     <div style={{ padding: "24px 32px", maxWidth: 1280, margin: "0 auto" }}>
 
       {/* 필터 + 수집 버튼 */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select value={sector} onChange={e => setSector(e.target.value)} style={sel}>
           {SECTORS.map(s => <option key={s}>{s}</option>)}
         </select>
@@ -120,31 +120,67 @@ export default function NewsTab() {
         </button>
       </div>
 
+      {/* 최근 수집 타임스탬프 */}
+      <div style={{ marginBottom: 20, fontSize: "0.78rem", color: "#8B949E" }}>
+        {collecting
+          ? <span style={{ color: "#E3B341" }}>⏳ 뉴스 수집 및 AI 리포트 생성 중…</span>
+          : lastCollected
+            ? <span>📌 최신 수집: <strong style={{ color: "#C9D1D9" }}>{timeAgo(lastCollected)}</strong> ({lastCollected.slice(0,16).replace("T"," ")})</span>
+            : <span style={{ color: "#484F58" }}>📌 최신 수집: 없음 — ⚡ 버튼을 눌러 첫 수집을 시작하세요</span>
+        }
+      </div>
+
       {error && <div style={errBox}>{error}</div>}
 
       {/* KPI 카드 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
         {[
-          { label: "총 수집 뉴스",   value: stats.total,       sub: "전체 기간" },
-          { label: "커버 섹터",      value: stats.sectors,     sub: "개 분야" },
-          { label: "최신 시장 감성", value: sentimentIcon(report?.sentiment), sub: "AI 종합 판단", sm: true },
-          { label: "리포트 횟수",   value: stats.reportCount, sub: "누적" },
+          {
+            label: "총 수집 뉴스",
+            value: stats.total || "—",
+            sub: stats.total ? "전체 기간" : "수집 전",
+            hint: stats.total === 0 ? "⚡ 버튼으로 커짐" : undefined,
+          },
+          {
+            label: "커버 섹터",
+            value: stats.sectors || "—",
+            sub: stats.sectors ? "개 분야" : "수집 전",
+          },
+          {
+            label: "최신 시장 감성",
+            value: sentimentIcon(report?.sentiment),
+            sub: "AI 종합 판단",
+            sm: true,
+          },
+          {
+            label: "리포트 횟수",
+            value: stats.reportCount || "—",
+            sub: stats.reportCount ? "누적" : "수집 전",
+          },
         ].map(k => (
           <div key={k.label} style={kpiCard}>
             <div style={kpiLbl}>{k.label}</div>
             <div style={{ ...kpiVal, fontSize: k.sm ? "1.3rem" : "2rem" }}>{k.value}</div>
             <div style={kpiSub}>{k.sub}</div>
+            {k.hint && <div style={{ fontSize: "0.68rem", color: "#E3B341", marginTop: 4 }}>{k.hint}</div>}
           </div>
         ))}
       </div>
 
       {/* AI 리포트 */}
       <div style={secTitle}>🤖 AI 종합 시장 리포트</div>
+
       {!report ? (
-        <div style={empty}>
-          <div style={{ fontSize: "3rem", marginBottom: 12 }}>📭</div>
-          <p style={{ color: "#E6EDF3" }}>아직 생성된 리포트가 없습니다.</p>
-          <p style={{ fontSize: "0.85rem" }}>"⚡ 뉴스 수집 & 리포트 생성" 버튼을 눌러 시작하세요.</p>
+        <div style={{ ...reportBox, textAlign: "center", padding: "48px 32px" }}>
+          <div style={{ fontSize: "2.5rem", marginBottom: 14 }}>📊</div>
+          <p style={{ color: "#E6EDF3", fontWeight: 600, marginBottom: 8 }}>아직 생성된 리포트가 없습니다</p>
+          <p style={{ color: "#8B949E", fontSize: "0.88rem", lineHeight: 1.8, maxWidth: 480, margin: "0 auto 20px" }}>
+            ⚡ <strong style={{ color: "#3FB950" }}>뉴스 수집 &amp; 리포트 생성</strong> 버튼을 누르면<br />
+            AI가 최신 거시경제 뉴스를 수집하고 시장 요약·투자 인사이트·리스크를 이곳에 생성합니다.
+          </p>
+          <button onClick={runPipeline} disabled={collecting} style={{ ...btnGreen, padding: "12px 24px", fontSize: "0.95rem" }}>
+            {collecting ? "수집 중…" : "⚡ 지금 시작하기"}
+          </button>
         </div>
       ) : (
         <div style={reportBox}>
@@ -166,11 +202,15 @@ export default function NewsTab() {
               }}>{t}</button>
             ))}
           </div>
+
           {reportTab === 0 && (
             <>
               <div style={insightPanel}>
                 <div style={phGreen}>📊 시장 요약</div>
-                <p style={{ color: "#C9D1D9", fontSize: "0.92rem", lineHeight: 1.8, margin: 0 }}>{report.marketSummary}</p>
+                {report.marketSummary
+                  ? <p style={{ color: "#C9D1D9", fontSize: "0.92rem", lineHeight: 1.8, margin: 0 }}>{report.marketSummary}</p>
+                  : <p style={{ color: "#484F58", fontSize: "0.88rem", margin: 0 }}>뉴스 수집을 시작하면 AI가 시장 요약을 이곳에 생성합니다.</p>
+                }
               </div>
               {(report.sectorInsights ?? []).length > 0 && (
                 <div style={{ marginTop: 16 }}>
@@ -195,7 +235,10 @@ export default function NewsTab() {
           {reportTab === 1 && (
             <div style={insightPanel}>
               <div style={phGreen}>💡 투자자 핵심 액션 포인트</div>
-              <pre style={{ color: "#C9D1D9", fontSize: "0.9rem", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.8 }}>{report.topInsights}</pre>
+              {report.topInsights
+                ? <pre style={{ color: "#C9D1D9", fontSize: "0.9rem", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.8 }}>{report.topInsights}</pre>
+                : <p style={{ color: "#484F58", fontSize: "0.88rem", margin: 0 }}>뉴스 수집 후 AI가 투자 인사이트를 생성합니다.</p>
+              }
               {(report.topTickers ?? []).length > 0 && (
                 <div style={{ marginTop: 14 }}>
                   <div style={{ ...phGreen, marginBottom: 8 }}>📌 주목 종목</div>
@@ -212,7 +255,10 @@ export default function NewsTab() {
           {reportTab === 2 && (
             <div style={riskPanel}>
               <div style={phRed}>⚠️ 주요 리스크 요인</div>
-              <pre style={{ color: "#C9D1D9", fontSize: "0.9rem", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.8 }}>{report.riskFactors}</pre>
+              {report.riskFactors
+                ? <pre style={{ color: "#C9D1D9", fontSize: "0.9rem", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.8 }}>{report.riskFactors}</pre>
+                : <p style={{ color: "#484F58", fontSize: "0.88rem", margin: 0 }}>뉴스 수집 후 AI가 주요 리스크를 이곳에 정리합니다.</p>
+              }
             </div>
           )}
         </div>
@@ -220,24 +266,34 @@ export default function NewsTab() {
 
       {/* 뉴스 목록 */}
       <div style={{ ...secTitle, marginTop: 32 }}>📰 수집된 뉴스 목록</div>
-      <p style={{ color: "#8B949E", fontSize: "0.85rem", marginBottom: 14 }}>
-        <strong style={{ color: "#E6EDF3" }}>{sector === "전체" ? "전체 섹터" : sector}</strong> · {news.length}건
-      </p>
-      {news.length === 0 && !loading ? (
-        <div style={empty}><div style={{ fontSize: "2.5rem" }}>📭</div><p style={{ marginTop: 12 }}>수집된 뉴스가 없습니다.</p></div>
-      ) : news.map(n => (
-        <div key={n.id} style={{ background: "#161B22", border: "1px solid #21262D", borderRadius: 10, padding: "14px 20px", marginBottom: 8 }}>
-          <a href={n.url} target="_blank" rel="noreferrer"
-            style={{ color: "#E6EDF3", fontWeight: 600, fontSize: "0.95rem", lineHeight: 1.5, display: "block", marginBottom: 6 }}>
-            {n.title}
-          </a>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ background: "#21262D", color: "#8B949E", fontSize: "0.68rem", padding: "2px 7px", borderRadius: 4 }}>{n.source}</span>
-            <span style={{ color: "#8B949E", fontSize: "0.72rem" }}>{timeAgo(n.publishedAt)}</span>
-            <span style={{ background: "#1C2333", color: "#79C0FF", fontSize: "0.68rem", padding: "2px 7px", borderRadius: 4 }}>{n.sector}</span>
-          </div>
+      {isEmpty ? (
+        <div style={empty}>
+          <div style={{ fontSize: "2.5rem" }}>📭</div>
+          <p style={{ marginTop: 12, color: "#C9D1D9" }}>수집된 뉴스가 없습니다.</p>
+          <p style={{ fontSize: "0.85rem", color: "#484F58", marginTop: 4 }}>⚡ 버튼을 눌러 뉴스를 수동 수집하거나, 백엔드에서 예약 실행되면 자동으로 채워집니다.</p>
         </div>
-      ))}
+      ) : news.length === 0 && !loading ? (
+        <div style={empty}><div style={{ fontSize: "2rem" }}>🔍</div><p style={{ marginTop: 8 }}>필터 조건에 맞는 뉴스가 없습니다.</p></div>
+      ) : (
+        <>
+          <p style={{ color: "#8B949E", fontSize: "0.85rem", marginBottom: 14 }}>
+            <strong style={{ color: "#E6EDF3" }}>{sector === "전체" ? "전체 섹터" : sector}</strong> · {news.length}건
+          </p>
+          {news.map(n => (
+            <div key={n.id} style={{ background: "#161B22", border: "1px solid #21262D", borderRadius: 10, padding: "14px 20px", marginBottom: 8 }}>
+              <a href={n.url} target="_blank" rel="noreferrer"
+                style={{ color: "#E6EDF3", fontWeight: 600, fontSize: "0.95rem", lineHeight: 1.5, display: "block", marginBottom: 6 }}>
+                {n.title}
+              </a>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ background: "#21262D", color: "#8B949E", fontSize: "0.68rem", padding: "2px 7px", borderRadius: 4 }}>{n.source}</span>
+                <span style={{ color: "#8B949E", fontSize: "0.72rem" }}>{timeAgo(n.publishedAt)}</span>
+                <span style={{ background: "#1C2333", color: "#79C0FF", fontSize: "0.68rem", padding: "2px 7px", borderRadius: 4 }}>{n.sector}</span>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -269,7 +325,7 @@ const kpiLbl: React.CSSProperties = { fontSize: "0.72rem", color: "#8B949E", tex
 const kpiVal: React.CSSProperties = { fontWeight: 700, color: "#E6EDF3", lineHeight: 1 };
 const kpiSub: React.CSSProperties = { color: "#8B949E", fontSize: "0.82rem", marginTop: 4 };
 const secTitle: React.CSSProperties = { fontSize: "0.9rem", fontWeight: 700, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 12px", paddingBottom: 8, borderBottom: "1px solid #21262D" };
-const reportBox: React.CSSProperties = { background: "linear-gradient(135deg,#161B22 0%,#1C2333 100%)", border: "1px solid #30363D", borderRadius: 14, padding: "24px 28px" };
+const reportBox: React.CSSProperties = { background: "linear-gradient(135deg,#161B22 0%,#1C2333 100%)", border: "1px solid #30363D", borderRadius: 14, padding: "24px 28px", marginBottom: 12 };
 const insightPanel: React.CSSProperties = { background: "#0D1117", border: "1px solid #30363D", borderLeft: "3px solid #3FB950", borderRadius: 8, padding: "16px 20px" };
 const riskPanel: React.CSSProperties = { background: "#0D1117", border: "1px solid #30363D", borderLeft: "3px solid #F85149", borderRadius: 8, padding: "16px 20px" };
 const phGreen: React.CSSProperties = { fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#3FB950", marginBottom: 10 };
